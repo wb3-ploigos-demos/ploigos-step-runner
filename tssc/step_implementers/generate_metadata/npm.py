@@ -34,9 +34,10 @@ import os.path
 import json
 
 from tssc import StepImplementer
+from tssc.step_result import StepResult
 
 DEFAULT_CONFIG = {
-    'package-file': 'package.json'
+    'release-branch': 'master'
 }
 
 REQUIRED_CONFIG_KEYS = [
@@ -78,7 +79,7 @@ class Npm(StepImplementer): # pylint: disable=too-few-public-methods
         array_list
             Array of configuration keys that are required before running the step.
         """
-        return REQUIRED_CONFIG_KEYS
+        return []
 
     def _run_step(self):
         """Runs the TSSC step implemented by this StepImplementer.
@@ -88,21 +89,54 @@ class Npm(StepImplementer): # pylint: disable=too-few-public-methods
         dict
             Results of running this step.
         """
-        package_file = self.get_config_value('package-file')
+        step_result = StepResult.from_step_implementer(self)
 
-        # verify runtime config
-        if not os.path.exists(package_file):
-            raise ValueError('Given npm package file does not exist: ' + package_file)
+        app_version = None
+        pre_release = None
+        build = None
+        release_branch = self.get_config_value('release-branch')
 
-        with open(package_file) as package_file_object:
-            package_file_data = json.load(package_file_object)
+        app_version = self.get_config_value('app-version')
+        if app_version is None:
+            app_version = self.get_result_value(artifact_name='app-version')
+        if app_version is None:
+          step_result.success = False
+          step_result.message = f'No value for (app-version) provided via runtime flag' \
+                '(app-version) or from prior step implementer ({self.step_name}).'
+          return step_result
 
-        if not "version" in package_file_data:
-            raise ValueError('Given npm package file: ' + package_file + \
-              ' does not contain a \"version\" key')
+        pre_release = self.get_config_value('pre-release')
+        if pre_release is None:
+            pre_release = self.get_result_value(artifact_name='pre-release')
+        if pre_release is None:
+          step_result.success = False
+          step_result.message = f'No value for (pre-release) provided via runtime flag' \
+                '(pre-release) or from prior step implementer ({self.step_name}).'
+          return step_result
 
-        results = {
-            'app-version': package_file_data["version"]
-        }
+        build = self.get_config_value('build')
+        if build is None:
+            build = self.get_result_value(artifact_name='build')
+        if build is None:
+          step_result.success = False
+          step_result.message = f'No value for (build) provided via runtime flag' \
+                '(build) or from prior step implementer ({self.step_name}).'
+          return step_result
 
-        return results
+        if pre_release == release_branch:
+            version = f'{app_version}+{build}'
+            image_tag = f'{app_version}'
+        else:
+            version = f'{app_version}-{pre_release}+{build}'
+            image_tag = f'{app_version}-{pre_release}'
+
+        step_result.add_artifact(
+            name='version',
+            value=version
+        )
+        step_result.add_artifact(
+            name='container-image-version',
+            value=image_tag
+        )
+
+        return step_result
